@@ -46,6 +46,7 @@ class ValstormAuth:
         self.refresh_token = None
         self.organization_name = None
         self.default_app_id = None
+        self._last_mtime = 0
         self._load_tokens()
 
     @property
@@ -61,6 +62,7 @@ class ValstormAuth:
         
         if self.auth_file.exists():
             try:
+                self._last_mtime = self.auth_file.stat().st_mtime
                 data = json.loads(self.auth_file.read_text())
                 self.access_token = data.get("access_token")
                 self.refresh_token = data.get("refresh_token")
@@ -82,6 +84,15 @@ class ValstormAuth:
             print(f"Error saving tokens for profile {self.profile}: {e}", file=sys.stderr)
 
     async def get_client(self) -> httpx.AsyncClient:
+        # Check if auth file was updated externally (e.g. via CLI login)
+        if self.auth_file.exists():
+            try:
+                current_mtime = self.auth_file.stat().st_mtime
+                if current_mtime > getattr(self, '_last_mtime', 0):
+                    self._load_tokens()
+            except Exception:
+                pass
+
         headers = {}
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
