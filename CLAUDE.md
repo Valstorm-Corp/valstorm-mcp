@@ -28,12 +28,21 @@ uv run python -m valstorm_mcp.main
 uv run valstorm-mcp
 ```
 
-## Configuration (Environment Variables)
+## Configuration (env vars + valstorm.json)
 
-```bash
-VALSTORM_ENV=local    # prod | dev | local (default: local)
-VALSTORM_PROFILE=default  # profile name (default: default)
-```
+Two sources, in priority order:
+
+1. **`valstorm.json`** in the cwd (or any parent directory) — the CLI's project config.
+   The MCP walks up from cwd at startup to find this file and uses its `env` / `profile`.
+   The MCP also **re-reads it on every authenticated tool call** (mtime-gated), so an
+   external `valstorm auth switch <profile> --env <env>` is reflected in the running
+   server without restarting it.
+
+2. **Env vars** (fallback when there is no `valstorm.json`):
+   ```bash
+   VALSTORM_ENV=local        # prod | dev | local (default: local)
+   VALSTORM_PROFILE=default  # profile name (default: default)
+   ```
 
 Environments:
 - `prod` → `https://api.valstorm.com`
@@ -96,9 +105,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (or you
 | `refresh_auth()` | Manually refresh access token |
 | `logout()` | Clear tokens for current profile |
 | `get_me()` | Get current user info / test auth |
-| `get_environment()` | Show current env, profile, base URL, auth file path |
-| `switch_account(profile)` | Switch to a different profile |
-| `list_accounts()` | List all saved profiles for current env |
+| `get_environment()` | Show current env, profile, base URL, auth file path (auto-reloads valstorm.json first) |
+| `switch_account(profile, env=None)` | Switch profile and optionally env. Validates auth file exists; errors clearly otherwise. In-memory only — persist with the CLI's `valstorm auth switch` |
+| `list_accounts()` | List all saved profiles for the current env |
 
 ### OAuth Tools (for building integrations)
 | Tool | Description |

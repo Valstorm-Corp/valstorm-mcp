@@ -16,10 +16,96 @@ ENVIRONMENTS = {
     "local": "http://localhost:8010"
 }
 
-VALSTORM_ENV = os.environ.get("VALSTORM_ENV", "local").lower()
-VALSTORM_PROFILE = os.environ.get("VALSTORM_PROFILE", "default").lower()
-BASE_URL = ENVIRONMENTS.get(VALSTORM_ENV, ENVIRONMENTS["prod"])
-API_BASE_URL = f"{BASE_URL}/v1"
+def _find_project_config() -> Optional[Path]:
+    """Walk up from cwd looking for a valstorm.json (the CLI's project config)."""
+    cur = Path.cwd()
+    while cur != cur.parent:
+        candidate = cur / "valstorm.json"
+        if candidate.exists():
+            return candidate
+        cur = cur.parent
+    return None
+
+
+class MCPConfig:
+    """Mutable env/profile state for the running MCP server.
+
+    On startup, prefers `valstorm.json` (found by walking up from cwd) over the
+    `VALSTORM_ENV` / `VALSTORM_PROFILE` env vars — the CLI's project config is
+    the source of truth, env vars are just the fallback for non-project launches.
+
+    `reload_if_changed()` re-reads `valstorm.json` when its mtime advances, so an
+    external `valstorm auth switch` is picked up without restarting the server.
+    """
+
+    def __init__(self):
+        self.env = "local"
+        self.profile = "default"
+        self.base_url = ENVIRONMENTS["local"]
+        self.api_base_url = f"{self.base_url}/v1"
+        self._config_path: Optional[Path] = _find_project_config()
+        self._config_mtime: float = 0.0
+
+        # Seed from env vars first; let valstorm.json override if present.
+        env_var = os.environ.get("VALSTORM_ENV")
+        profile_var = os.environ.get("VALSTORM_PROFILE")
+        if env_var:
+            self.env = env_var.lower()
+        if profile_var:
+            self.profile = profile_var.lower()
+
+        if self._config_path:
+            self._load_from_config()
+
+        self._refresh_urls()
+
+    def _load_from_config(self):
+        try:
+            self._config_mtime = self._config_path.stat().st_mtime
+            data = json.loads(self._config_path.read_text())
+            if data.get("env"):
+                self.env = str(data["env"]).lower()
+            if data.get("profile"):
+                self.profile = str(data["profile"]).lower()
+        except Exception as e:
+            print(f"Warning: failed to read {self._config_path}: {e}", file=sys.stderr)
+
+    def reload_if_changed(self) -> bool:
+        """Re-read valstorm.json if its mtime advanced. Returns True if env or profile changed."""
+        # Also handle the case where valstorm.json appears after server start.
+        if self._config_path is None:
+            self._config_path = _find_project_config()
+            if self._config_path is None:
+                return False
+
+        if not self._config_path.exists():
+            return False
+
+        try:
+            current_mtime = self._config_path.stat().st_mtime
+            if current_mtime <= self._config_mtime:
+                return False
+        except Exception:
+            return False
+
+        prev_env, prev_profile = self.env, self.profile
+        self._load_from_config()
+        self._refresh_urls()
+        return (self.env != prev_env) or (self.profile != prev_profile)
+
+    def set(self, env: Optional[str] = None, profile: Optional[str] = None):
+        if env is not None:
+            self.env = env.lower()
+        if profile is not None:
+            self.profile = profile.lower()
+        self._refresh_urls()
+
+    def _refresh_urls(self):
+        self.base_url = ENVIRONMENTS.get(self.env, ENVIRONMENTS["prod"])
+        self.api_base_url = f"{self.base_url}/v1"
+
+
+config = MCPConfig()
 
 def get_auth_file(env: str, profile: str) -> Path:
     """Helper to get the auth file path for a specific environment and profile."""
@@ -40,18 +126,26 @@ def get_auth_file(env: str, profile: str) -> Path:
     return new_path
 
 class ValstormAuth:
-    def __init__(self, profile: str = VALSTORM_PROFILE):
-        self.profile = profile
+    def __init__(self):
         self.access_token = None
         self.refresh_token = None
         self.organization_name = None
         self.default_app_id = None
         self._last_mtime = 0
+        self._last_auth_path: Optional[Path] = None
         self._load_tokens()
 
     @property
+    def profile(self) -> str:
+        return config.profile
+
+    @property
+    def env(self) -> str:
+        return config.env
+
+    @property
     def auth_file(self) -> Path:
-        return get_auth_file(VALSTORM_ENV, self.profile)
+        return get_auth_file(config.env, config.profile)
 
     def _load_tokens(self):
         # Reset current tokens before loading
@@ -59,11 +153,13 @@ class ValstormAuth:
         self.refresh_token = None
         self.organization_name = None
         self.default_app_id = None
-        
-        if self.auth_file.exists():
+
+        auth_file = self.auth_file
+        self._last_auth_path = auth_file
+        if auth_file.exists():
             try:
-                self._last_mtime = self.auth_file.stat().st_mtime
-                data = json.loads(self.auth_file.read_text())
+                self._last_mtime = auth_file.stat().st_mtime
+                data = json.loads(auth_file.read_text())
                 self.access_token = data.get("access_token")
                 self.refresh_token = data.get("refresh_token")
                 self.organization_name = data.get("organization_name")
@@ -84,11 +180,19 @@ class ValstormAuth:
             print(f"Error saving tokens for profile {self.profile}: {e}", file=sys.stderr)
 
     async def get_client(self) -> httpx.AsyncClient:
-        # Check if auth file was updated externally (e.g. via CLI login)
-        if self.auth_file.exists():
+        # Pick up external config changes (e.g. `valstorm auth switch` writes a new env/profile
+        # to valstorm.json) before deciding which auth file to read.
+        if config.reload_if_changed():
+            self._load_tokens()
+
+        # If the active auth file path has shifted (env or profile changed), reload tokens.
+        current_auth_file = self.auth_file
+        if current_auth_file != self._last_auth_path:
+            self._load_tokens()
+        elif current_auth_file.exists():
             try:
-                current_mtime = self.auth_file.stat().st_mtime
-                if current_mtime > getattr(self, '_last_mtime', 0):
+                current_mtime = current_auth_file.stat().st_mtime
+                if current_mtime > self._last_mtime:
                     self._load_tokens()
             except Exception:
                 pass
@@ -96,16 +200,15 @@ class ValstormAuth:
         headers = {}
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
-        
-        client = httpx.AsyncClient(base_url=API_BASE_URL, headers=headers)
-        return client
+
+        return httpx.AsyncClient(base_url=config.api_base_url, headers=headers)
 
     async def refresh_auth(self) -> bool:
         if not self.refresh_token:
             return False
         
         try:
-            async with httpx.AsyncClient(base_url=API_BASE_URL) as client:
+            async with httpx.AsyncClient(base_url=config.api_base_url) as client:
                 response = await client.post("/oauth2/refresh", json={"refresh_token": self.refresh_token})
                 if response.status_code == 200:
                     data = response.json()
@@ -327,7 +430,7 @@ async def oauth_authorize(
         "code_challenge": code_challenge
     }
     try:
-        async with httpx.AsyncClient(base_url=API_BASE_URL) as client:
+        async with httpx.AsyncClient(base_url=config.api_base_url) as client:
             response = await client.post("/oauth2/authorize", json=payload)
             if response.status_code == 200:
                 return json.dumps(response.json(), indent=2)
@@ -392,7 +495,7 @@ async def oauth_get_token(
         "run_as": run_as
     }
     try:
-        async with httpx.AsyncClient(base_url=API_BASE_URL) as client:
+        async with httpx.AsyncClient(base_url=config.api_base_url) as client:
             response = await client.post("/oauth2/token", json=payload)
             if response.status_code == 200:
                 data = response.json()
@@ -432,7 +535,7 @@ async def login(email: str, password: str) -> str:
     After calling this, use verify_2fa(email, code) to complete login.
     """
     try:
-        async with httpx.AsyncClient(base_url=API_BASE_URL) as client:
+        async with httpx.AsyncClient(base_url=config.api_base_url) as client:
             # The API uses OAuth2PasswordRequestForm which is usually form-encoded
             response = await client.post("/oauth2/login", data={
                 "username": email,
@@ -453,7 +556,7 @@ async def verify_2fa(email: str, code: str) -> str:
     Complete Valstorm login using the 2FA code sent to your email.
     """
     try:
-        async with httpx.AsyncClient(base_url=API_BASE_URL) as client:
+        async with httpx.AsyncClient(base_url=config.api_base_url) as client:
             response = await client.post("/oauth2/verify-2fa", json={
                 "email": email,
                 "code": code
@@ -992,27 +1095,60 @@ async def scaffold_valstorm_object(
     return "\n---\n".join(results)
 
 @mcp.tool()
-async def switch_account(profile: str) -> str:
+async def switch_account(profile: str, env: Optional[str] = None) -> str:
     """
-    Switch to a different account profile.
-    If the profile doesn't exist, you'll need to login.
+    Switch the running MCP session to a different account profile, and optionally a different environment.
+
+    Args:
+        profile: The profile name to switch to (e.g. "default", "admin", "b2b").
+        env: Optional environment ("prod", "dev", or "local"). If omitted, keeps the current env.
+
+    Validates that an auth file exists for the resulting (env, profile) combination.
+    If not, returns a clear error pointing at `valstorm login` instead of silently
+    producing a broken state.
+
+    Note: this only updates the in-memory state of the running MCP server. To persist
+    the change to the project's valstorm.json, use the CLI: `valstorm auth switch <profile> --env <env>`.
+    (The MCP also auto-detects external valstorm.json changes, so a CLI switch is reflected
+    on the next tool call without needing this tool.)
     """
-    auth_manager.profile = profile.lower()
+    target_profile = profile.lower()
+    target_env = env.lower() if env else config.env
+
+    if target_env not in ENVIRONMENTS:
+        return (
+            f"Unknown environment '{target_env}'. "
+            f"Must be one of: {sorted(ENVIRONMENTS.keys())}."
+        )
+
+    auth_file_path = get_auth_file(target_env, target_profile)
+    if not auth_file_path.exists():
+        return (
+            f"No saved credentials for env='{target_env}', profile='{target_profile}' "
+            f"(expected at {auth_file_path}). "
+            f"Run from the shell: valstorm login --env {target_env} --profile {target_profile}"
+        )
+
+    config.set(env=target_env, profile=target_profile)
     auth_manager._load_tokens()
-    return f"Switched to profile: {auth_manager.profile}. Use 'get_me' to check authentication status."
+    return (
+        f"Switched to env='{config.env}', profile='{config.profile}'. "
+        f"Use 'get_me' to check authentication status."
+    )
 
 @mcp.tool()
 async def list_accounts() -> str:
     """
     List all available account profiles for the current environment.
     """
+    config.reload_if_changed()
     auth_dir = Path.home() / ".valstorm"
     if not auth_dir.exists():
         return "No account profiles found."
-    
+
     profiles = set()
-    prefix = f"auth_{VALSTORM_ENV}"
-    
+    prefix = f"auth_{config.env}"
+
     try:
         for f in auth_dir.iterdir():
             if f.is_file() and f.name.startswith(prefix) and f.suffix == ".json":
@@ -1025,24 +1161,34 @@ async def list_accounts() -> str:
                         profiles.add(profile)
     except Exception as e:
         return f"Error listing profiles: {str(e)}"
-    
+
     if not profiles:
-        return f"No account profiles found for environment: {VALSTORM_ENV}"
-    
+        return f"No account profiles found for environment: {config.env}"
+
     return json.dumps({
-        "current_profile": auth_manager.profile,
+        "current_env": config.env,
+        "current_profile": config.profile,
         "available_profiles": sorted(list(profiles))
     }, indent=2)
 
 @mcp.tool()
 async def get_environment() -> str:
-    """Gets the current Valstorm environment and profile the MCP is configured to use."""
+    """Gets the current Valstorm environment and profile the MCP is configured to use.
+
+    Auto-reloads the project's valstorm.json before responding, so a recent
+    `valstorm auth switch` from the CLI is reflected here without restarting the server.
+    """
+    reloaded = config.reload_if_changed()
+    if reloaded:
+        auth_manager._load_tokens()
     return json.dumps({
-        "environment": VALSTORM_ENV,
-        "profile": auth_manager.profile,
-        "base_url": BASE_URL,
-        "api_base_url": API_BASE_URL,
-        "auth_file": str(auth_manager.auth_file)
+        "environment": config.env,
+        "profile": config.profile,
+        "base_url": config.base_url,
+        "api_base_url": config.api_base_url,
+        "auth_file": str(auth_manager.auth_file),
+        "auth_file_exists": auth_manager.auth_file.exists(),
+        "reloaded_from_valstorm_json": reloaded,
     }, indent=2)
 
 @mcp.tool()
@@ -1065,7 +1211,7 @@ async def get_status() -> str:
     """Get the project's operational status."""
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"{API_BASE_URL}/status")
+            response = await client.get(f"{config.api_base_url}/status")
             response.raise_for_status()
             return response.text
     except Exception as e:
