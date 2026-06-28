@@ -259,12 +259,16 @@ class ValstormAuth:
                 
                 if response.status_code == 200:
                     data = response.json()
-                    # The query result is typically namespaced by the object, e.g., {"app": [{"id": "...", ...}]}
-                    for key, records in data.items():
-                        if isinstance(records, list) and len(records) > 0:
-                            self.default_app_id = records[0].get("id")
-                            self._save_tokens()
-                            break
+                    # The query result might be namespaced (dict) or a direct list of records
+                    if isinstance(data, dict):
+                        for key, records in data.items():
+                            if isinstance(records, list) and len(records) > 0:
+                                self.default_app_id = records[0].get("id")
+                                self._save_tokens()
+                                break
+                    elif isinstance(data, list) and len(data) > 0:
+                        self.default_app_id = data[0].get("id")
+                        self._save_tokens()
             finally:
                 await client.aclose()
                 
@@ -1205,6 +1209,45 @@ async def logout() -> str:
         except Exception as e:
             return f"Error deleting auth file: {str(e)}"
     return f"Already logged out of profile '{auth_manager.profile}'."
+
+@mcp.tool()
+async def push_sandbox_app(sandbox_id: str, app_id: str, target: Optional[str] = None) -> str:
+    """
+    Push a sandbox app deployment to a specified target.
+    
+    Sends a POST request to '/v1/sandbox/{sandbox_id}/app/{app_id}/push'.
+    
+    Args:
+        sandbox_id: The ID of the sandbox environment.
+        app_id: The ID of the application being pushed.
+        target: Optional target destination for the deployment (e.g., 'production', 'staging').
+    
+    Returns:
+        A JSON string containing the deployment result or an error message.
+    """
+    async def make_request(client):
+        params = {}
+        if target:
+            params["target"] = target
+        url = f"{config.api_base_url}/v1/sandbox/{sandbox_id}/app/{app_id}/push"
+        return await client.post(url, params=params)
+
+    client = await auth_manager.get_client()
+    try:
+        response = await make_request(client)
+        if response.status_code == 401:
+            if await auth_manager.refresh_auth():
+                client = await auth_manager.get_client()
+                response = await make_request(client)
+
+        if response.status_code == 200:
+            return json.dumps(response.json(), indent=2)
+        else:
+            return f"Failed: {response.status_code} {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        await client.aclose()
 
 @mcp.tool()
 async def get_status() -> str:
