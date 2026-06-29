@@ -513,24 +513,21 @@ async def oauth_get_token(
         return f"Error exchanging token: {str(e)}"
 
 @mcp.tool()
-async def oauth_login_server(
-    client_id: str,
-    client_secret: str,
-    redirect_uri: str,
-    run_as: str
-) -> str:
+async def login_with_pat(pat: str) -> str:
     """
-    Convenience tool for 'server_credentials' (service account) login.
-    Does not require a browser or 2FA.
+    Login to Valstorm using a Personal Access Token (PAT).
     """
-    return await oauth_get_token(
-        client_id=client_id,
-        client_secret=client_secret,
-        grant_type="server_credentials",
-        code="n/a",
-        redirect_uri=redirect_uri,
-        run_as=run_as
-    )
+    try:
+        auth_manager.save_tokens(access_token=pat, refresh_token=None)
+        # Clear cache and check validity by loading /auth/load
+        client = await auth_manager.get_client()
+        response = await client.get("/auth/load")
+        if response.status_code == 200:
+            return f"Successfully logged in with PAT. Profile: {auth_manager.profile}"
+        else:
+            return "Invalid Personal Access Token."
+    except Exception as e:
+        return f"Error: {e}"
 
 @mcp.tool()
 async def login(email: str, password: str) -> str:
