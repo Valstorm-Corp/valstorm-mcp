@@ -1260,6 +1260,201 @@ async def get_status() -> str:
     except Exception as e:
         return f"Error checking status: {str(e)}"
 
+
+
+# ==========================================
+# Sandbox Management Tools
+# ==========================================
+
+@mcp.tool()
+async def create_sandbox(name: str, description: Optional[str] = None) -> str:
+    """Create a new isolated sandbox environment.
+
+    Args:
+        name: Lowercase alphanumeric name for the sandbox (e.g., "dev", "staging").
+        description: Markdown text detailing the sandbox's purpose.
+
+    Returns:
+        String describing the result of the operation.
+    """
+    async def make_request(client: httpx.AsyncClient):
+        payload = {"name": name}
+        if description:
+            payload["description"] = description
+        return await client.post("/sandbox", json=payload)
+
+    client = await auth_manager.get_client()
+    try:
+        response = await make_request(client)
+        if response.status_code == 401:
+            if await auth_manager.refresh_auth():
+                client = await auth_manager.get_client()
+                response = await make_request(client)
+
+        if response.status_code in (200, 201):
+            return json.dumps(response.json(), indent=2)
+        else:
+            return f"Failed: {response.status_code} {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        await client.aclose()
+
+
+@mcp.tool()
+async def list_sandboxes() -> str:
+    """List all sandbox environments associated with the active production organization.
+    
+    Returns:
+        JSON string containing the list of sandboxes.
+    """
+    async def make_request(client: httpx.AsyncClient):
+        return await client.get("/sandbox")
+
+    client = await auth_manager.get_client()
+    try:
+        response = await make_request(client)
+        if response.status_code == 401:
+            if await auth_manager.refresh_auth():
+                client = await auth_manager.get_client()
+                response = await make_request(client)
+
+        if response.status_code == 200:
+            return json.dumps(response.json(), indent=2)
+        else:
+            return f"Failed: {response.status_code} {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        await client.aclose()
+
+
+@mcp.tool()
+async def refresh_sandbox(name: str) -> str:
+    """Wipes the sandbox database entirely and re-clones configuration collections and users from the parent production database.
+
+    Args:
+        name: The name of the sandbox to refresh.
+        
+    Returns:
+        String describing the result of the operation.
+    """
+    async def make_request(client: httpx.AsyncClient):
+        return await client.post(f"/sandbox/{name}/refresh")
+
+    client = await auth_manager.get_client()
+    try:
+        response = await make_request(client)
+        if response.status_code == 401:
+            if await auth_manager.refresh_auth():
+                client = await auth_manager.get_client()
+                response = await make_request(client)
+
+        if response.status_code == 200:
+            return json.dumps(response.json(), indent=2)
+        else:
+            return f"Failed: {response.status_code} {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        await client.aclose()
+
+
+@mcp.tool()
+async def delete_sandbox(name: str) -> str:
+    """Permanently drops the isolated sandbox database and removes references.
+
+    Args:
+        name: The name of the sandbox to delete.
+        
+    Returns:
+        String describing the result of the operation.
+    """
+    async def make_request(client: httpx.AsyncClient):
+        return await client.delete(f"/sandbox/{name}")
+
+    client = await auth_manager.get_client()
+    try:
+        response = await make_request(client)
+        if response.status_code == 401:
+            if await auth_manager.refresh_auth():
+                client = await auth_manager.get_client()
+                response = await make_request(client)
+
+        if response.status_code == 200:
+            return json.dumps(response.json(), indent=2)
+        else:
+            return f"Failed: {response.status_code} {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        await client.aclose()
+
+
+@mcp.tool()
+async def add_sandbox_users(name: str, users: list[str]) -> str:
+    """Add users to a sandbox environment.
+
+    Args:
+        name: The name of the sandbox.
+        users: A list of user emails or user IDs to add to the sandbox.
+        
+    Returns:
+        String describing the result of the operation.
+    """
+    async def make_request(client: httpx.AsyncClient):
+        return await client.post(f"/sandbox/{name}/users", json={"users": users})
+
+    client = await auth_manager.get_client()
+    try:
+        response = await make_request(client)
+        if response.status_code == 401:
+            if await auth_manager.refresh_auth():
+                client = await auth_manager.get_client()
+                response = await make_request(client)
+
+        if response.status_code == 200:
+            return json.dumps(response.json(), indent=2)
+        else:
+            return f"Failed: {response.status_code} {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        await client.aclose()
+
+
+@mcp.tool()
+async def remove_sandbox_users(name: str, users: list[str]) -> str:
+    """Remove users from a sandbox environment.
+
+    Args:
+        name: The name of the sandbox.
+        users: A list of user emails or user IDs to remove from the sandbox.
+        
+    Returns:
+        String describing the result of the operation.
+    """
+    async def make_request(client: httpx.AsyncClient):
+        return await client.request("DELETE", f"/sandbox/{name}/users", json={"users": users})
+
+    client = await auth_manager.get_client()
+    try:
+        response = await make_request(client)
+        if response.status_code == 401:
+            if await auth_manager.refresh_auth():
+                client = await auth_manager.get_client()
+                response = await make_request(client)
+
+        if response.status_code == 200:
+            return json.dumps(response.json(), indent=2)
+        else:
+            return f"Failed: {response.status_code} {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        await client.aclose()
+
+
 def main():
     """
     Initializes and runs the MCP server with stdio transport.
@@ -1271,4 +1466,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
