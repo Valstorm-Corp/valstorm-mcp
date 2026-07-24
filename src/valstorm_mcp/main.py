@@ -1212,22 +1212,43 @@ async def push_sandbox_app(sandbox_id: str, app_id: str, target: Optional[str] =
     """
     Push a sandbox app deployment to a specified target.
     
-    Sends a POST request to '/v1/sandbox/{sandbox_id}/app/{app_id}/push'.
+    Sends a POST request to '/v1/sandbox/{sandbox_id}/app/{app_id}/push/{target}'.
     
     Args:
         sandbox_id: The ID of the sandbox environment.
         app_id: The ID of the application being pushed.
-        target: Optional target destination for the deployment (e.g., 'production', 'staging').
+        target: Optional target destination for the deployment (e.g., 'production', 'staging'). If omitted, defaults to parent production organization.
     
     Returns:
         A JSON string containing the deployment result or an error message.
     """
+    # 1. Resolve Target Org ID
+    target_val = target
+    if not target_val:
+        try:
+            auth_file = auth_manager.auth_file
+            if auth_file.exists():
+                auth_data = json.loads(auth_file.read_text())
+                target_val = auth_data.get("user", {}).get("organization_id", "").split('_s_')[0]
+        except Exception:
+            pass
+            
+    if not target_val:
+        # Fetch dynamically from /auth/load
+        try:
+            client = await auth_manager.get_client()
+            res = await client.get("/auth/load")
+            if res.status_code == 200:
+                target_val = res.json().get("user", {}).get("organization_id", "").split('_s_')[0]
+        except Exception:
+            pass
+
+    if not target_val:
+        return "Failed: Could not resolve target parent organization ID. Please specify target explicitly."
+
     async def make_request(client):
-        params = {}
-        if target:
-            params["target"] = target
-        url = f"{config.api_base_url}/v1/sandbox/{sandbox_id}/app/{app_id}/push"
-        return await client.post(url, params=params)
+        url = f"{config.api_base_url}/sandbox/{sandbox_id}/app/{app_id}/push/{target_val}"
+        return await client.post(url)
 
     client = await auth_manager.get_client()
     try:
