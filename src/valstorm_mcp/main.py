@@ -1473,6 +1473,46 @@ async def remove_sandbox_users(name: str, users: list[str]) -> str:
         await client.aclose()
 
 
+@mcp.tool()
+async def search_vfs(query: str, limit: int = 10, enable_rag: Optional[bool] = None) -> str:
+    """Unified hybrid semantic search and RAG knowledge retrieval across the Valstorm Virtual File System (VFS).
+    
+    Performs parallel retrieval across MongoDB file metadata and Qdrant semantic vector chunks,
+    fused using Reciprocal Rank Fusion (RRF). Can be used for exact file lookup, semantic search,
+    or question answering against workspace documents (PDFs, Word docs, Markdown, text, code, etc.).
+
+    Args:
+        query: The search term or natural language question (e.g. 'master service agreement', 'invoice_2024.pdf', 'What is the return policy?').
+        limit: Maximum number of ranked document matches to return (1-50, default 10).
+        enable_rag: Optional boolean flag to force AI answer synthesis. Defaults to auto-detecting intent.
+
+    Returns:
+        JSON string containing classified intent, top ranked document hits (with snippet, file_id, file_version_id, scores, and sources), and latency metrics.
+    """
+    async def make_request(client: httpx.AsyncClient):
+        payload: dict[str, Any] = {"query": query, "limit": limit}
+        if enable_rag is not None:
+            payload["enable_rag"] = enable_rag
+        return await client.post("/search", json=payload)
+
+    client = await auth_manager.get_client()
+    try:
+        response = await make_request(client)
+        if response.status_code == 401:
+            if await auth_manager.refresh_auth():
+                client = await auth_manager.get_client()
+                response = await make_request(client)
+
+        if response.status_code == 200:
+            return json.dumps(response.json(), indent=2)
+        else:
+            return f"Failed: {response.status_code} {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        await client.aclose()
+
+
 def main():
     """
     Initializes and runs the MCP server with stdio transport.
