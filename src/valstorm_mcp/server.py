@@ -152,7 +152,7 @@ async def record_query_sql(query: str, bypass_cache: bool = False, limit: int = 
 
 @mcp.tool()
 async def record_query_mongo(collection: str, pipeline: list[dict[str, Any]]) -> str:
-    """Executes a native MongoDB aggregation pipeline query."""
+    """Executes a structured document aggregation pipeline query."""
     return await _record_query_mongo(collection=collection, pipeline=pipeline)
 
 

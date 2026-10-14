@@ -45,7 +45,7 @@ uv run --project apps/valstorm-mcp-server uvicorn valstorm_mcp.server:app --host
 
 ### Records, SQL, & Schemas
 9. `record_query_sql(query, bypass_cache=False, limit=50)` — Executes custom Valstorm SQL engine (`SELECT ... WHERE owner = ME`).
-10. `record_query_mongo(collection, pipeline)` — Native MongoDB aggregation pipeline (`$match`, `$group`, `$lookup`, `$facet`).
+10. `record_query_mongo(collection, pipeline)` — Structured document aggregation pipeline (`$match`, `$group`, `$lookup`, `$facet`).
 11. `record_hydrate_batch(ids)` — Resolves foreign key ID arrays to display names and schemas in a single roundtrip.
 12. `record_get(api_name, record_id)` — Fetches single record by ID.
 13. `record_create(api_name, record)` — Creates single or batch records.

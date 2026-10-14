@@ -169,13 +169,13 @@ async def record_delete(api_name: str, record_id: str, confirm: bool = False) ->
 
 
 async def record_query_mongo(collection: str, pipeline: list[dict[str, Any]]) -> str:
-    """Executes a native MongoDB aggregation pipeline query.
+    """Executes a structured document aggregation pipeline query.
 
     Ideal for complex data transformations, lookups, group-by metrics, and nested array queries.
 
     Args:
         collection: The target collection/table name (e.g. 'contact', 'deal', 'audit_log').
-        pipeline: List of MongoDB aggregation pipeline stages.
+        pipeline: List of document aggregation pipeline stages.
 
     Returns:
         JSON string containing the array of aggregation results.
@@ -195,7 +195,7 @@ async def record_query_mongo(collection: str, pipeline: list[dict[str, Any]]) ->
         status_code = getattr(e, "status_code", 500)
         return json.dumps({"error": str(e), "status_code": status_code})
     except Exception as e:
-        return json.dumps({"error": f"Failed to execute Mongo aggregation on '{clean_collection}': {e!s}"})
+        return json.dumps({"error": f"Failed to execute aggregation query on '{clean_collection}': {e!s}"})
 
 
 async def record_hydrate_batch(ids: list[str]) -> str:
