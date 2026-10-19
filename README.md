@@ -2,6 +2,10 @@
 
 Official hosted Model Context Protocol (MCP) server for the Valstorm Enterprise Platform.
 
+- **Official Tool Page & Quickstart:** [https://www.valstorm.com/free-tools/valstorm-mcp](https://www.valstorm.com/free-tools/valstorm-mcp?utm_source=github&utm_medium=readme&utm_campaign=valstorm_mcp)
+- **All Valstorm Free & Open-Source Tools:** [https://www.valstorm.com/free-tools](https://www.valstorm.com/free-tools?utm_source=github&utm_medium=readme&utm_campaign=valstorm_mcp)
+- **Valstorm BOS Platform Overview:** [https://www.valstorm.com/bos](https://www.valstorm.com/bos?utm_source=github&utm_medium=readme&utm_campaign=valstorm_mcp)
+
 This microservice acts as a stateless, high-performance SSE & JSON-RPC proxy to the Valstorm Core API (`https://api.valstorm.com/v1`), exposing granularly scoped tools for autonomous agents (Claude Desktop, Cursor, hermes profiles, internal enterprise workers) while offloading binary transfer via direct S3 recipes.
 
 ## Architecture Highlights
