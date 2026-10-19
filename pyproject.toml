@@ -1,5 +1,5 @@
 [project]
-name = "valstorm-mcp-server @ git+https://github.com/Valstorm-Corp/valstorm-mcp.git"
+name = "valstorm-mcp-server"
 version = "1.0.1"
 description = "Hosted MCP server proxy for the Valstorm platform"
 readme = "README.md"
